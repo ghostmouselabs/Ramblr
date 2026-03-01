@@ -1,26 +1,242 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* Class-based dark mode */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Typography */
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+
+  /* Primary accent — soft indigo/blue-purple */
+  --color-primary-50: oklch(0.97 0.02 270);
+  --color-primary-100: oklch(0.93 0.04 270);
+  --color-primary-200: oklch(0.87 0.07 270);
+  --color-primary-300: oklch(0.78 0.11 270);
+  --color-primary-400: oklch(0.68 0.15 270);
+  --color-primary-500: oklch(0.58 0.19 270);
+  --color-primary-600: oklch(0.50 0.19 270);
+  --color-primary-700: oklch(0.42 0.17 270);
+  --color-primary-800: oklch(0.35 0.14 270);
+  --color-primary-900: oklch(0.28 0.11 270);
+
+  /* Record button red/coral */
+  --color-record: oklch(0.63 0.22 25);
+  --color-record-hover: oklch(0.56 0.22 25);
+  --color-record-glow: oklch(0.63 0.22 25 / 0.4);
+
+  /* Semantic surface tokens */
+  --color-surface: oklch(1 0 0 / 0.7);
+  --color-surface-hover: oklch(1 0 0 / 0.8);
+  --color-surface-border: oklch(1 0 0 / 0.3);
+
+  /* Text */
+  --color-text-primary: oklch(0.18 0.03 265);
+  --color-text-secondary: oklch(0.45 0.02 265);
+  --color-text-tertiary: oklch(0.6 0.01 265);
+
+  /* Status */
+  --color-success: oklch(0.65 0.17 150);
+  --color-error: oklch(0.60 0.20 25);
+  --color-warning: oklch(0.75 0.15 75);
+
+  /* Shadows */
+  --shadow-glass: 0 8px 32px oklch(0 0 0 / 0.06), 0 2px 8px oklch(0 0 0 / 0.04);
+  --shadow-glass-hover: 0 12px 40px oklch(0 0 0 / 0.08), 0 4px 12px oklch(0 0 0 / 0.06);
+  --shadow-glass-lg: 0 16px 48px oklch(0 0 0 / 0.1), 0 6px 16px oklch(0 0 0 / 0.06);
+
+  /* Radius */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.5rem;
+
+  /* Animations */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+/* ───────── Light mode background gradient ───────── */
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --bg-gradient: linear-gradient(
+      135deg,
+      oklch(0.94 0.06 290) 0%,
+      oklch(0.93 0.05 250) 30%,
+      oklch(0.95 0.05 320) 60%,
+      oklch(0.93 0.04 270) 100%
+    );
+  }
+
+  /* Dark mode overrides */
+  .dark {
+    --bg-gradient: linear-gradient(
+      135deg,
+      oklch(0.17 0.04 265) 0%,
+      oklch(0.14 0.05 280) 30%,
+      oklch(0.16 0.04 300) 60%,
+      oklch(0.13 0.03 270) 100%
+    );
+
+    --color-surface: oklch(0.22 0.02 265 / 0.55);
+    --color-surface-hover: oklch(0.25 0.02 265 / 0.6);
+    --color-surface-border: oklch(1 0 0 / 0.08);
+    --color-text-primary: oklch(0.93 0.01 265);
+    --color-text-secondary: oklch(0.7 0.02 265);
+    --color-text-tertiary: oklch(0.55 0.01 265);
+    --shadow-glass: 0 8px 32px oklch(0 0 0 / 0.25), 0 2px 8px oklch(0 0 0 / 0.15);
+    --shadow-glass-hover: 0 12px 40px oklch(0 0 0 / 0.3), 0 4px 12px oklch(0 0 0 / 0.2);
+    --shadow-glass-lg: 0 16px 48px oklch(0 0 0 / 0.35), 0 6px 16px oklch(0 0 0 / 0.2);
+  }
+
+  html {
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--bg-gradient);
+    background-attachment: fixed;
+    min-height: 100dvh;
+    color: var(--color-text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ───────── Glassmorphism utility ───────── */
+@layer utilities {
+  .glass {
+    background: var(--color-surface);
+    backdrop-filter: blur(20px) saturate(1.8);
+    -webkit-backdrop-filter: blur(20px) saturate(1.8);
+    border: 1px solid var(--color-surface-border);
+    box-shadow: var(--shadow-glass);
+  }
+}
+
+/* ───────── Dark mode color transitions ───────── */
+@layer base {
+  .glass,
+  body {
+    transition:
+      color 0.3s ease,
+      background-color 0.3s ease,
+      border-color 0.3s ease,
+      box-shadow 0.3s ease;
+  }
+}
+
+/* ───────── Record button pulse animation ───────── */
+@layer utilities {
+  @keyframes record-pulse {
+    0%,
+    100% {
+      transform: scale(1);
+      box-shadow: 0 0 0 0 var(--color-record-glow);
+    }
+    50% {
+      transform: scale(1.04);
+      box-shadow: 0 0 0 12px oklch(0.63 0.22 25 / 0);
+    }
+  }
+
+  .animate-record-pulse {
+    animation: record-pulse 1.5s var(--ease-smooth) infinite;
+  }
+}
+
+/* ───────── Toast slide-up animation ───────── */
+@layer utilities {
+  @keyframes slide-up {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-slide-up {
+    animation: slide-up 0.3s var(--ease-spring) forwards;
+  }
+}
+
+/* ───────── Card fade-in animation ───────── */
+@layer utilities {
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-fade-in {
+    animation: fade-in-up 0.4s var(--ease-smooth) both;
+  }
+}
+
+/* ───────── Shimmer animation (indeterminate progress) ───────── */
+@layer utilities {
+  @keyframes shimmer {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(200%);
+    }
+  }
+
+  .animate-shimmer {
+    animation: shimmer 1.5s var(--ease-smooth) infinite;
+  }
+}
+
+/* ───────── Reduced motion ───────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ───────── Focus styles ───────── */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-primary-500);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}
+
+/* ───────── Scrollbar styling ───────── */
+@layer base {
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: oklch(0.5 0 0 / 0.2);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.5 0 0 / 0.35);
+  }
 }
