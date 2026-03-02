@@ -251,7 +251,7 @@ export function AudioRecorder({
       stopWaveform();
       // Persist one final time before unmount so data isn't lost
       persistToIndexedDB();
-      engineRef.current?.stop();
+      void engineRef.current?.stop();
     };
   }, [pauseTimer, stopAutosave, stopWaveform, persistToIndexedDB]);
 
@@ -298,7 +298,7 @@ export function AudioRecorder({
 
   const handleStop = useCallback(async () => {
     stopAutosave();
-    const blob = engineRef.current?.stop() ?? null;
+    const blob = (await engineRef.current?.stop()) ?? null;
     resetTimer();
     stopWaveform();
 

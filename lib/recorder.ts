@@ -212,20 +212,17 @@ export class AudioRecorderEngine {
         this.cleanup();
       };
 
-      // Handle stream ending externally (e.g., user stops tab share)
-      this.stream.addEventListener("inactive", () => {
+      // Handle stream ending externally (e.g., user stops tab share).
+      // These are fire-and-forget — we just need to stop cleanly.
+      const autoStop = () => {
         if (this._state !== "inactive") {
-          this.stop();
+          void this.stop();
         }
-      });
+      };
 
-      // Also watch individual tracks for ended events
+      this.stream.addEventListener("inactive", autoStop);
       for (const track of this.stream.getTracks()) {
-        track.addEventListener("ended", () => {
-          if (this._state !== "inactive") {
-            this.stop();
-          }
-        });
+        track.addEventListener("ended", autoStop);
       }
 
       this.mediaRecorder.start(MEDIARECORDER_TIMESLICE_MS);
@@ -266,24 +263,45 @@ export class AudioRecorderEngine {
 
   /**
    * Stop recording and return the assembled audio blob.
-   * Returns null if no data was recorded.
+   *
+   * Returns a Promise because MediaRecorder.stop() delivers its final
+   * buffered data via an async `dataavailable` event. We wait for the
+   * subsequent `stop` event (which fires after the final data delivery)
+   * before assembling the blob. This guarantees we capture all audio,
+   * including short recordings that haven't hit a timeslice yet.
    */
-  stop(): Blob | null {
-    if (this._state === "inactive") return null;
+  stop(): Promise<Blob | null> {
+    if (this._state === "inactive") return Promise.resolve(null);
 
-    // Request any pending data before stopping
-    if (this.mediaRecorder?.state !== "inactive") {
-      this.mediaRecorder?.stop();
+    const recorder = this.mediaRecorder;
+
+    // Recorder already stopped (e.g. stream ended) — assemble what we have
+    if (!recorder || recorder.state === "inactive") {
+      const blob = this.assembleBlob();
+      this.cleanup();
+      return Promise.resolve(blob);
     }
 
-    const mimeType = this._mimeType || "audio/webm";
-    const blob =
-      this.chunks.length > 0
-        ? new Blob(this.chunks, { type: mimeType })
-        : null;
+    return new Promise((resolve) => {
+      // The `stop` event fires after the final `dataavailable`,
+      // so by this point this.chunks has everything.
+      recorder.addEventListener(
+        "stop",
+        () => {
+          const blob = this.assembleBlob();
+          this.cleanup();
+          resolve(blob);
+        },
+        { once: true },
+      );
 
-    this.cleanup();
-    return blob;
+      recorder.stop();
+    });
+  }
+
+  private assembleBlob(): Blob | null {
+    if (this.chunks.length === 0) return null;
+    return new Blob(this.chunks, { type: this._mimeType || "audio/webm" });
   }
 
   private setState(state: RecorderState): void {
