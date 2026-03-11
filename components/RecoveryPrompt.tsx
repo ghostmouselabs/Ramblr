@@ -8,44 +8,12 @@ import {
   deleteRecording,
   type SavedRecording,
 } from "@/lib/storage";
+import { formatTimestamp, formatDuration } from "@/lib/format";
 
 // ── Types ─────────────────────────────────────────────────────
 
 interface RecoveryPromptProps {
   onRecover: (blob: Blob, mimeType: string) => void;
-}
-
-// ── Helpers ───────────────────────────────────────────────────
-
-function formatTimestamp(ts: number): string {
-  const date = new Date(ts);
-  const now = new Date();
-  const isToday = date.toDateString() === now.toDateString();
-
-  const time = date.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-
-  if (isToday) return `Today at ${time}`;
-
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) {
-    return `Yesterday at ${time}`;
-  }
-
-  return `${date.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  })} at ${time}`;
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  const m = Math.floor(seconds / 60);
-  const s = Math.round(seconds % 60);
-  return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
 // ── Component ─────────────────────────────────────────────────

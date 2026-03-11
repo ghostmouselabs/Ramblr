@@ -12,6 +12,8 @@ export const ERRORS = {
   // Network & connectivity
   network:
     "Couldn\u2019t connect to the server. Please check your internet connection and try again.",
+  timeout:
+    "The transcription request timed out. This can happen with very long audio. Please try again or use a shorter recording.",
 
   // API / Auth
   apiKeyMissing: "API key not found. Please set it in settings.",

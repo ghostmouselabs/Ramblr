@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Sparkles, Coins, Clock } from "lucide-react";
+import { Sparkles, Coins } from "lucide-react";
 import { useIsClient } from "@/lib/hooks";
 import { MODELS, DEFAULT_MODEL, STORAGE_KEYS, type ModelId } from "@/lib/constants";
 
@@ -13,13 +13,11 @@ interface ModelSelectorProps {
 const MODEL_ICONS: Record<ModelId, typeof Sparkles> = {
   "gpt-4o-transcribe": Sparkles,
   "gpt-4o-mini-transcribe": Coins,
-  "whisper-1": Clock,
 };
 
 const MODEL_ORDER: ModelId[] = [
   "gpt-4o-transcribe",
   "gpt-4o-mini-transcribe",
-  "whisper-1",
 ];
 
 export function ModelSelector({ value, onChange }: ModelSelectorProps) {
@@ -34,7 +32,7 @@ export function ModelSelector({ value, onChange }: ModelSelectorProps) {
         <legend className="text-sm font-medium text-text-secondary mb-2">
           Transcription model
         </legend>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" role="radiogroup">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup">
           {MODEL_ORDER.map((id) => {
             const model = MODELS[id];
             const Icon = MODEL_ICONS[id];
@@ -99,6 +97,9 @@ export function useModelSelection(): [ModelId, (model: ModelId) => void] {
     const stored = localStorage.getItem(STORAGE_KEYS.model);
     if (stored && stored in MODELS) {
       setModel(stored as ModelId);
+    } else if (stored) {
+      // Stale value (e.g. removed "whisper-1") — reset to default
+      localStorage.setItem(STORAGE_KEYS.model, DEFAULT_MODEL);
     }
   }
 

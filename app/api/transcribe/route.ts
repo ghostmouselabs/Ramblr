@@ -4,7 +4,6 @@ import { OPENAI_TRANSCRIPTION_URL } from "@/lib/constants";
 const VALID_MODELS = new Set([
   "gpt-4o-transcribe",
   "gpt-4o-mini-transcribe",
-  "whisper-1",
 ]);
 
 export async function POST(request: NextRequest) {

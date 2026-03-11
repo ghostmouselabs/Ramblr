@@ -20,6 +20,13 @@ import {
   STORAGE_KEYS,
   type ModelId,
 } from "@/lib/constants";
+import { saveAudio, generateAudioId } from "@/lib/storage";
+import {
+  saveTranscription,
+  updateTranscription,
+  generateTranscriptionId,
+} from "@/lib/transcription-store";
+import { getAudioDuration } from "@/lib/audio-utils";
 import { ERRORS, getUserMessage } from "@/lib/errors";
 
 interface AudioUploaderProps {
@@ -135,6 +142,35 @@ export function AudioUploader({
         ),
       );
 
+      // ── Persist audio blob + create pending entry ────────
+      const audioId = generateAudioId();
+      const txId = generateTranscriptionId();
+      const duration = await getAudioDuration(file).catch(() => 0);
+      const effectiveDuration = Number.isFinite(duration) ? duration : 0;
+
+      await saveAudio({
+        id: audioId,
+        blob: file,
+        mimeType: file.type,
+        timestamp: Date.now(),
+        duration: effectiveDuration,
+        source: "upload",
+        fileName: file.name,
+      });
+
+      saveTranscription({
+        id: txId,
+        text: "",
+        timestamp: Date.now(),
+        model,
+        source: "upload",
+        status: "pending",
+        duration: effectiveDuration || undefined,
+        audioId,
+        fileName: file.name,
+        fileSize: file.size,
+      });
+
       try {
         let text: string;
 
@@ -148,7 +184,7 @@ export function AudioUploader({
           });
         } else {
           const { chunkAudio } = await import("@/lib/chunker");
-          const chunks = await chunkAudio(file, file.name, model);
+          const chunks = await chunkAudio(file, file.name);
 
           setProgress((prev) =>
             prev.map((p, idx) =>
@@ -175,6 +211,8 @@ export function AudioUploader({
           );
         }
 
+        // ── Success — update entry ─────────────────────────
+        updateTranscription(txId, { status: "complete", text: text.trim() });
         results.push({ fileName: file.name, text: text.trim() });
 
         setProgress((prev) =>
@@ -183,8 +221,12 @@ export function AudioUploader({
           ),
         );
       } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") break;
+        if (err instanceof DOMException && err.name === "AbortError") {
+          updateTranscription(txId, { status: "failed", text: "" });
+          break;
+        }
 
+        updateTranscription(txId, { status: "failed" });
         const message = getUserMessage(err);
 
         setProgress((prev) =>

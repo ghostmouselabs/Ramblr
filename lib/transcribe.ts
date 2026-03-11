@@ -1,4 +1,4 @@
-import type { ModelId } from "./constants";
+import { FETCH_TIMEOUT_MS, type ModelId } from "./constants";
 import { ERRORS, HTTP_ERRORS } from "./errors";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -30,16 +30,27 @@ export async function transcribeChunk({
   formData.append("api_key", apiKey);
   formData.append("model", model);
 
+  // Combine caller's abort signal with a per-request timeout.
+  // AbortSignal.timeout() produces a TimeoutError DOMException,
+  // distinguishable from the caller's AbortError.
+  const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  const combinedSignal = signal
+    ? AbortSignal.any([signal, timeoutSignal])
+    : timeoutSignal;
+
   let response: Response;
   try {
     response = await fetch("/api/transcribe", {
       method: "POST",
       body: formData,
-      signal,
+      signal: combinedSignal,
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      throw err; // Let callers handle cancellation
+      throw err; // Caller-initiated cancellation
+    }
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      throw new Error(ERRORS.timeout);
     }
     throw new Error(ERRORS.network);
   }

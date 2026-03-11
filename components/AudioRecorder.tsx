@@ -26,14 +26,20 @@ import { useIsClient } from "@/lib/hooks";
 import {
   STORAGE_KEYS,
   MAX_CHUNK_SIZE_BYTES,
-  AUTOSAVE_INTERVAL_MS,
   type ModelId,
 } from "@/lib/constants";
 import {
   saveRecording,
   deleteRecording,
   generateRecordingId,
+  saveAudio,
+  generateAudioId,
 } from "@/lib/storage";
+import {
+  saveTranscription,
+  updateTranscription,
+  generateTranscriptionId,
+} from "@/lib/transcription-store";
 import { ERRORS, getUserMessage } from "@/lib/errors";
 import type { TranscriptionResult } from "@/lib/transcribe";
 
@@ -107,7 +113,6 @@ export function AudioRecorder({
   const rafRef = useRef<number>(0);
   const abortRef = useRef<AbortController | null>(null);
   const recordingIdRef = useRef<string | null>(null);
-  const autosaveRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Timer ─────────────────────────────────────────────────
 
@@ -192,9 +197,11 @@ export function AudioRecorder({
     analyserRef.current = null;
   }, []);
 
-  // ── Auto-save to IndexedDB ────────────────────────────────
+  // ── Crash-recovery persistence ──────────────────────────────
+  //
+  // Instead of a timer-based autosave, we persist on every chunk arrival.
+  // The MediaRecorder timeslice is 30s, so max data loss on crash is ~30s.
 
-  // Sync latest values into refs so the autosave interval reads current data
   const sourceRef = useRef(source);
   const elapsedSecRef = useRef(elapsedSec);
 
@@ -224,17 +231,6 @@ export function AudioRecorder({
     });
   }, []);
 
-  const startAutosave = useCallback(() => {
-    autosaveRef.current = setInterval(persistToIndexedDB, AUTOSAVE_INTERVAL_MS);
-  }, [persistToIndexedDB]);
-
-  const stopAutosave = useCallback(() => {
-    if (autosaveRef.current) {
-      clearInterval(autosaveRef.current);
-      autosaveRef.current = null;
-    }
-  }, []);
-
   const clearRecoveryData = useCallback(async () => {
     const recId = recordingIdRef.current;
     if (recId) {
@@ -247,13 +243,12 @@ export function AudioRecorder({
   useEffect(() => {
     return () => {
       pauseTimer();
-      stopAutosave();
       stopWaveform();
       // Persist one final time before unmount so data isn't lost
       persistToIndexedDB();
       void engineRef.current?.stop();
     };
-  }, [pauseTimer, stopAutosave, stopWaveform, persistToIndexedDB]);
+  }, [pauseTimer, stopWaveform, persistToIndexedDB]);
 
   // ── Recording controls ────────────────────────────────────
 
@@ -262,7 +257,11 @@ export function AudioRecorder({
     recordingIdRef.current = recId;
 
     const engine = new AudioRecorderEngine({
-      onChunk: () => {},
+      onChunk: () => {
+        // Persist to IndexedDB on every chunk arrival (~every 30s).
+        // This replaces the old 5-minute interval-based autosave.
+        persistToIndexedDB();
+      },
       onAnalyser: (analyser) => {
         analyserRef.current = analyser;
         drawWaveform();
@@ -278,13 +277,12 @@ export function AudioRecorder({
       setPhase("recording");
       setElapsedSec(0);
       startTimer();
-      startAutosave();
     } catch (err) {
       recordingIdRef.current = null;
       const message = getUserMessage(err);
       if (message) toast(message, "error");
     }
-  }, [source, drawWaveform, startTimer, startAutosave, toast]);
+  }, [source, drawWaveform, startTimer, persistToIndexedDB, toast]);
 
   const handlePause = useCallback(() => {
     engineRef.current?.pause();
@@ -297,8 +295,8 @@ export function AudioRecorder({
   }, [startTimer]);
 
   const handleStop = useCallback(async () => {
-    stopAutosave();
     const blob = (await engineRef.current?.stop()) ?? null;
+    const mimeType = engineRef.current?.mimeType || "audio/webm";
     resetTimer();
     stopWaveform();
 
@@ -308,7 +306,26 @@ export function AudioRecorder({
       return;
     }
 
-    // ── Transcription ─────────────────────────────────────
+    // ── Persist complete audio blob BEFORE transcription ────
+    const audioId = generateAudioId();
+    const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+    const fileName = `recording.${ext}`;
+    const duration = elapsedSecRef.current;
+
+    await saveAudio({
+      id: audioId,
+      blob,
+      mimeType,
+      timestamp: Date.now(),
+      duration,
+      source: "recording",
+      fileName,
+    });
+
+    // Crash-recovery data is no longer needed — full blob is saved
+    await clearRecoveryData();
+
+    // ── Check API key ──────────────────────────────────────
     const apiKey = localStorage.getItem(STORAGE_KEYS.apiKey);
     if (!apiKey) {
       toast(ERRORS.apiKeyMissing, "error");
@@ -316,11 +333,25 @@ export function AudioRecorder({
       return;
     }
 
+    // ── Create pending transcription entry ──────────────────
+    const txId = generateTranscriptionId();
+    saveTranscription({
+      id: txId,
+      text: "",
+      timestamp: Date.now(),
+      model,
+      source: "recording",
+      status: "pending",
+      duration,
+      audioId,
+      fileName,
+      fileSize: blob.size,
+    });
+
+    // ── Transcription ──────────────────────────────────────
     const controller = new AbortController();
     abortRef.current = controller;
     setPhase("transcribing");
-
-    const fileName = `recording.${blob.type.includes("mp4") ? "mp4" : "webm"}`;
 
     setProgress([
       { fileName, status: "transcribing", currentChunk: 0, totalChunks: 1 },
@@ -338,7 +369,7 @@ export function AudioRecorder({
           signal: controller.signal,
         });
       } else {
-        const chunks = await chunkAudio(blob, fileName, model);
+        const chunks = await chunkAudio(blob, fileName);
         setProgress([
           {
             fileName,
@@ -366,11 +397,15 @@ export function AudioRecorder({
         );
       }
 
-      // Transcription succeeded — clear recovery data
-      await clearRecoveryData();
+      // ── Success — update entry and notify parent ─────────
+      updateTranscription(txId, { status: "complete", text: text.trim() });
       onTranscriptionComplete([{ fileName, text: text.trim() }]);
     } catch (err) {
-      if (!(err instanceof DOMException && err.name === "AbortError")) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        // User cancelled — remove the pending entry
+        updateTranscription(txId, { status: "failed", text: "" });
+      } else {
+        updateTranscription(txId, { status: "failed" });
         toast(getUserMessage(err), "error");
       }
     }
@@ -378,7 +413,7 @@ export function AudioRecorder({
     abortRef.current = null;
     setPhase("idle");
     setProgress([]);
-  }, [model, onTranscriptionComplete, resetTimer, stopAutosave, stopWaveform, clearRecoveryData, toast]);
+  }, [model, onTranscriptionComplete, resetTimer, stopWaveform, clearRecoveryData, toast]);
 
   const handleCancelTranscription = useCallback(() => {
     abortRef.current?.abort();
@@ -540,7 +575,7 @@ export function AudioRecorder({
         {/* Status text */}
         <p className="text-xs text-text-tertiary">
           {isRecording && !isPaused
-            ? "Recording... Don\u2019t close this tab."
+            ? "Recording\u2026 Don\u2019t close this tab."
             : isRecording && isPaused
               ? "Paused"
               : "Tap to start recording"}

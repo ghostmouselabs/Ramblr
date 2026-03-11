@@ -5,8 +5,6 @@ import {
   FFMPEG_CORE_BASE_URL,
   MAX_CHUNK_SIZE_BYTES,
   MAX_CHUNK_DURATION_SEC,
-  MODELS,
-  type ModelId,
 } from "./constants";
 import { getExtensionForMime, getAudioDuration } from "./audio-utils";
 import { ERRORS, splitFailed, processFailed } from "./errors";
@@ -67,7 +65,7 @@ async function getFFmpeg(): Promise<FFmpeg> {
  *
  * The chunk duration is the minimum of:
  *  - Time that fits in MAX_CHUNK_SIZE_BYTES (estimated from average bitrate)
- *  - MAX_CHUNK_DURATION_SEC (for models with a duration cap)
+ *  - MAX_CHUNK_DURATION_SEC (API duration limit)
  *
  * A 90% safety margin is applied to the size-based estimate to
  * account for container overhead and variable bitrate.
@@ -75,7 +73,6 @@ async function getFFmpeg(): Promise<FFmpeg> {
 function calculateChunkDuration(
   fileSizeBytes: number,
   totalDurationSec: number,
-  model: ModelId,
 ): number {
   const avgBytesPerSec = fileSizeBytes / totalDurationSec;
 
@@ -84,14 +81,7 @@ function calculateChunkDuration(
     (MAX_CHUNK_SIZE_BYTES / avgBytesPerSec) * 0.9,
   );
 
-  // Duration cap from the model
-  const modelConfig = MODELS[model];
-  const maxSecFromModel =
-    modelConfig.maxDurationMin != null
-      ? MAX_CHUNK_DURATION_SEC
-      : Infinity;
-
-  return Math.max(30, Math.min(maxSecFromSize, maxSecFromModel));
+  return Math.max(30, Math.min(maxSecFromSize, MAX_CHUNK_DURATION_SEC));
 }
 
 /**
@@ -105,7 +95,6 @@ function calculateChunkDuration(
 export async function splitWithFFmpeg(
   blob: Blob,
   fileName: string,
-  model: ModelId,
 ): Promise<AudioChunk[]> {
   const ff = await getFFmpeg();
 
@@ -127,11 +116,7 @@ export async function splitWithFFmpeg(
   const effectiveDuration =
     Number.isFinite(duration) && duration > 0 ? duration : blob.size / 16000; // rough fallback: ~128kbps
 
-  const chunkDuration = calculateChunkDuration(
-    blob.size,
-    effectiveDuration,
-    model,
-  );
+  const chunkDuration = calculateChunkDuration(blob.size, effectiveDuration);
   const numChunks = Math.ceil(effectiveDuration / chunkDuration);
 
   logger.log(
