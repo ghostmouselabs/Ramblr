@@ -17,6 +17,35 @@ export interface TranscribeChunkOptions {
 
 export type ProgressCallback = (completed: number, total: number) => void;
 
+// ── Signal helpers ────────────────────────────────────────────
+
+/**
+ * Combine multiple AbortSignals into one that aborts when ANY input fires.
+ * Uses native AbortSignal.any() where available, with a manual fallback
+ * for older browsers (Safari < 17.4, iOS < 17.4).
+ */
+function combineSignals(...signals: AbortSignal[]): AbortSignal {
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any(signals);
+  }
+
+  // Manual fallback: create a controller that aborts when any input signal fires
+  const controller = new AbortController();
+
+  for (const sig of signals) {
+    if (sig.aborted) {
+      controller.abort(sig.reason);
+      return controller.signal;
+    }
+    sig.addEventListener("abort", () => controller.abort(sig.reason), {
+      once: true,
+      signal: controller.signal, // Auto-remove listener if controller aborts first
+    });
+  }
+
+  return controller.signal;
+}
+
 // ── Single chunk transcription ────────────────────────────────
 export async function transcribeChunk({
   blob,
@@ -35,7 +64,7 @@ export async function transcribeChunk({
   // distinguishable from the caller's AbortError.
   const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
   const combinedSignal = signal
-    ? AbortSignal.any([signal, timeoutSignal])
+    ? combineSignals(signal, timeoutSignal)
     : timeoutSignal;
 
   let response: Response;
