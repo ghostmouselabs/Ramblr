@@ -12,7 +12,6 @@ export const metadata: Metadata = {
   title: "Ramblr — Audio Transcription",
   description:
     "Record or upload audio and get instant transcriptions. Fast, private, powered by OpenAI.",
-  icons: { icon: "/favicon.svg" },
 };
 
 export default function RootLayout({
