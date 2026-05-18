@@ -445,10 +445,35 @@ function HistoryTab({
 
   const handleRetranscribe = useCallback(
     async (entry: TranscriptionEntry) => {
-      if (!entry.audioId) return;
+      console.log("[retry] retranscribe clicked", {
+        txId: entry.id,
+        audioId: entry.audioId,
+        model: entry.model,
+        fileSize: entry.fileSize,
+      });
+      if (!entry.audioId) {
+        console.error("[retry] no audioId on entry", entry);
+        toast("This transcription has no saved audio to retry.", "error");
+        return;
+      }
       const audio = await getAudio(entry.audioId);
       if (!audio) {
+        console.error("[retry] audio not found in IndexedDB", entry.audioId);
         toast("Audio file not found.", "error");
+        return;
+      }
+      console.log("[retry] retrieved audio from IndexedDB", {
+        audioId: entry.audioId,
+        blobSize: audio.blob.size,
+        blobType: audio.blob.type || "(empty)",
+        fileName: audio.fileName,
+        mimeType: audio.mimeType,
+      });
+      if (audio.blob.size === 0) {
+        toast(
+          "The saved audio is empty (0 bytes) — it may have been lost. Please re-record.",
+          "error",
+        );
         return;
       }
       onRetranscribe(audio.blob, audio.fileName, entry.audioId);
