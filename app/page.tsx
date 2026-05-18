@@ -233,7 +233,7 @@ function HomeInner() {
       <header className="glass sticky top-0 z-40 border-b border-surface-border">
         <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-primary-500 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center">
               <AudioLines size={18} className="text-white" />
             </div>
             <span className="text-lg font-semibold tracking-tight text-text-primary">
