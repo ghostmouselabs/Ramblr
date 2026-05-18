@@ -85,12 +85,20 @@ function calculateChunkDuration(
 }
 
 /**
- * Split an audio file into chunks using ffmpeg.wasm.
+ * Split an audio file into chunks using ffmpeg's segment muxer.
  *
- * Uses `-c copy` (stream copy, no re-encoding) for speed. If a chunk
- * still exceeds the size limit after copy-mode splitting (can happen
- * with variable bitrate audio), it re-encodes that chunk at a fixed
- * bitrate as a fallback.
+ * One ffmpeg invocation runs `-f segment` with `-c copy`, producing a
+ * sequence of self-contained output files. ffmpeg only writes a
+ * segment file when it has audio data to put in it, so there are no
+ * header-only/phantom outputs — the previous "extract by seeking from
+ * start N times" approach could produce empty trailing chunks when
+ * duration estimation overshot the real end of audio.
+ *
+ * If any segment still exceeds the size limit after stream-copy
+ * (variable-bitrate edge case), that single segment is re-encoded at
+ * a fixed bitrate. The re-encode is a precise targeted fallback —
+ * not a heuristic guess — fired only for segments that demonstrably
+ * exceed the limit.
  */
 export async function splitWithFFmpeg(
   blob: Blob,
@@ -100,102 +108,145 @@ export async function splitWithFFmpeg(
 
   const ext = getExtensionForMime(blob.type || "");
   const inputName = `input.${ext}`;
+  const baseName = stripExtension(fileName);
+  const segmentPrefix = "seg_";
 
-  // Write source file to ffmpeg's virtual filesystem
   await ff.writeFile(inputName, await fetchFile(blob));
 
-  // Determine duration
-  const duration = await getAudioDuration(blob);
+  try {
+    // Compute a target segment duration. This is a hint to the segment
+    // muxer for *where to cut*; the muxer itself only emits files for
+    // ranges that contain audio, so an inaccurate estimate can only
+    // affect segment size, never produce empty outputs.
+    const probedDuration = await getAudioDuration(blob);
+    const effectiveDuration =
+      Number.isFinite(probedDuration) && probedDuration > 0
+        ? probedDuration
+        : blob.size / 16000; // ~128 kbps fallback for the hint only
+    const chunkDuration = calculateChunkDuration(blob.size, effectiveDuration);
 
-  if (!Number.isFinite(duration) || duration <= 0) {
-    // Can't determine duration — fall back to a conservative fixed
-    // segment length (60s) which should fit in 3.5MB for most codecs
-    logger.warn("Could not determine audio duration, using 60s segments");
-  }
+    console.log("[chunker] splitting", {
+      fileName,
+      inputBytes: blob.size,
+      probedDurationSec: probedDuration,
+      effectiveDurationSec: effectiveDuration,
+      targetSegmentSec: chunkDuration,
+    });
 
-  const effectiveDuration =
-    Number.isFinite(duration) && duration > 0 ? duration : blob.size / 16000; // rough fallback: ~128kbps
-
-  const chunkDuration = calculateChunkDuration(blob.size, effectiveDuration);
-  const numChunks = Math.ceil(effectiveDuration / chunkDuration);
-
-  logger.log(
-    `Splitting ${fileName}: ${effectiveDuration.toFixed(0)}s total, ` +
-      `${chunkDuration}s per chunk, ${numChunks} chunks`,
-  );
-
-  const chunks: AudioChunk[] = [];
-  const baseName = stripExtension(fileName);
-
-  for (let i = 0; i < numChunks; i++) {
-    const startSec = i * chunkDuration;
-    const outputName = `chunk_${i}.${ext}`;
-
-    // Stream-copy split (fast, no re-encoding)
+    // Single-pass split via ffmpeg's segment muxer.
+    //   -f segment            → segment muxer
+    //   -segment_time N       → cut every N seconds
+    //   -reset_timestamps 1   → each segment's timeline restarts at 0
+    //   -c copy               → no re-encoding; cuts at packet boundaries
+    //   -map 0:a              → audio streams only (drop any video)
+    // Opus packets are independently decodable, so stream-copy cuts
+    // are clean for webm/opus. For AAC/mp4 ffmpeg snaps to the nearest
+    // keyframe, which is acceptable for transcription.
+    const segmentTemplate = `${segmentPrefix}%03d.${ext}`;
     const exitCode = await ff.exec([
-      "-ss",
-      String(startSec),
-      "-t",
-      String(chunkDuration),
       "-i",
       inputName,
+      "-f",
+      "segment",
+      "-segment_time",
+      String(chunkDuration),
+      "-reset_timestamps",
+      "1",
       "-c",
       "copy",
-      outputName,
+      "-map",
+      "0:a",
+      segmentTemplate,
     ]);
 
     if (exitCode !== 0) {
-      await cleanupFile(ff, outputName);
-      throw new Error(splitFailed(i + 1));
+      console.error("[chunker] ffmpeg segment muxer failed", { exitCode });
+      throw new Error(splitFailed(1));
     }
 
-    const data = await ff.readFile(outputName);
-    let chunkBlob = new Blob([toArrayBuffer(data)], { type: blob.type });
+    // Enumerate the segments ffmpeg actually produced. listDir gives
+    // us the truth from the virtual FS rather than guessing a count
+    // from duration.
+    const dirEntries = await ff.listDir("/");
+    const segmentNames = dirEntries
+      .filter(
+        (e) =>
+          !e.isDir &&
+          e.name.startsWith(segmentPrefix) &&
+          e.name.endsWith(`.${ext}`),
+      )
+      .map((e) => e.name)
+      .sort();
 
-    // If copy-mode chunk is still too large (VBR edge case), re-encode
-    if (chunkBlob.size > MAX_CHUNK_SIZE_BYTES) {
-      logger.warn(
-        `Chunk ${i} is ${(chunkBlob.size / 1024 / 1024).toFixed(1)}MB after copy, re-encoding`,
-      );
-
-      const reEncodedName = `chunk_${i}_re.mp3`;
-      const reExitCode = await ff.exec([
-        "-ss",
-        String(startSec),
-        "-t",
-        String(chunkDuration),
-        "-i",
-        inputName,
-        "-b:a",
-        "64k",
-        "-ac",
-        "1",
-        reEncodedName,
-      ]);
-
-      if (reExitCode !== 0) {
-        await cleanupFile(ff, outputName);
-        await cleanupFile(ff, reEncodedName);
-        throw new Error(processFailed(i + 1));
-      }
-
-      const reData = await ff.readFile(reEncodedName);
-      chunkBlob = new Blob([toArrayBuffer(reData)], { type: "audio/mp3" });
-      await cleanupFile(ff, reEncodedName);
-    }
-
-    chunks.push({
-      blob: chunkBlob,
-      name: `${baseName}_part${i + 1}.${chunkBlob.type.includes("mp3") ? "mp3" : ext}`,
+    console.log("[chunker] ffmpeg produced", {
+      segmentCount: segmentNames.length,
+      segmentNames,
     });
 
-    await cleanupFile(ff, outputName);
+    if (segmentNames.length === 0) {
+      throw new Error(splitFailed(1));
+    }
+
+    // Materialize each segment into an AudioChunk, re-encoding the
+    // rare oversize case.
+    const chunks: AudioChunk[] = [];
+    for (let i = 0; i < segmentNames.length; i++) {
+      const segName = segmentNames[i];
+      const data = await ff.readFile(segName);
+      let chunkBlob = new Blob([toArrayBuffer(data)], { type: blob.type });
+      let outExt = ext;
+
+      if (chunkBlob.size > MAX_CHUNK_SIZE_BYTES) {
+        console.warn("[chunker] segment over size limit, re-encoding", {
+          index: i,
+          segName,
+          bytes: chunkBlob.size,
+          limit: MAX_CHUNK_SIZE_BYTES,
+        });
+
+        const reInputName = `over_${i}.${ext}`;
+        const reOutputName = `over_${i}.mp3`;
+        await ff.writeFile(reInputName, data);
+        try {
+          const reExit = await ff.exec([
+            "-i",
+            reInputName,
+            "-b:a",
+            "64k",
+            "-ac",
+            "1",
+            reOutputName,
+          ]);
+          if (reExit !== 0) {
+            console.error("[chunker] re-encode failed", { index: i, reExit });
+            throw new Error(processFailed(i + 1));
+          }
+          const reData = await ff.readFile(reOutputName);
+          chunkBlob = new Blob([toArrayBuffer(reData)], { type: "audio/mp3" });
+          outExt = "mp3";
+        } finally {
+          await cleanupFile(ff, reInputName);
+          await cleanupFile(ff, reOutputName);
+        }
+      }
+
+      chunks.push({
+        blob: chunkBlob,
+        name: `${baseName}_part${i + 1}.${outExt}`,
+      });
+
+      await cleanupFile(ff, segName);
+    }
+
+    console.log("[chunker] complete", {
+      finalChunkCount: chunks.length,
+      sizes: chunks.map((c) => c.blob.size),
+    });
+
+    return chunks;
+  } finally {
+    await cleanupFile(ff, inputName);
   }
-
-  // Cleanup input file
-  await cleanupFile(ff, inputName);
-
-  return chunks;
 }
 
 // ── Helpers ───────────────────────────────────────────────────
