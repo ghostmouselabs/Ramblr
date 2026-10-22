@@ -92,9 +92,10 @@ export function HelpModal({ open, onClose }: HelpModalProps) {
         </div>
 
         <p className="text-xs text-text-tertiary leading-relaxed">
-          Your API key is stored locally on your device and is never sent to our
-          servers. It&apos;s only used to communicate directly with OpenAI for
-          transcription.
+          Your API key is stored only in this browser. When you transcribe,
+          your key and audio are relayed through our server to OpenAI over
+          HTTPS. Our server never stores or logs your key, audio, or
+          transcripts.
         </p>
       </div>
     </Modal>

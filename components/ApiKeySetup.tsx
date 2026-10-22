@@ -119,7 +119,8 @@ export function ApiKeySetup({ onComplete }: ApiKeySetupProps) {
           </GlassCard>
 
           <p className="text-xs text-text-tertiary text-center leading-relaxed">
-            Your key is stored locally on your device and never sent to our servers.
+            Your key is stored only in this browser. When you transcribe, it&apos;s
+            relayed through our server to OpenAI and is never stored or logged.
           </p>
         </div>
       </div>
